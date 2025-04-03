@@ -34,23 +34,6 @@
 --|					A is LSB of lights output and C is MSB.
 --|					Once a pattern starts, it finishes back at OFF before it 
 --|					can be changed by the inputs
---|					
---|
---|                 xxx State Encoding key
---|                 --------------------
---|                  State | Encoding
---|                 --------------------
---|                  OFF   | 
---|                  ON    | 
---|                  R1    | 
---|                  R2    | 
---|                  R3    | 
---|                  L1    | 
---|                  L2    | 
---|                  L3    | 
---|                 --------------------
---|
---|
 --+----------------------------------------------------------------------------
 --|
 --| REQUIRED FILES :
@@ -86,23 +69,90 @@ library ieee;
   use ieee.numeric_std.all;
  
 entity thunderbird_fsm is 
---  port(
-	
---  );
+    port (
+        i_clk, i_reset  : in    std_logic;
+        i_left, i_right : in    std_logic;
+        o_lights_L      : out   std_logic_vector(2 downto 0);
+        o_lights_R      : out   std_logic_vector(2 downto 0)
+    );
 end thunderbird_fsm;
 
 architecture thunderbird_fsm_arch of thunderbird_fsm is 
+--| One-Hot State Encoding key
+--| --------------------
+--| State | Encoding
+--| --------------------
+--| OFF   | 10000000
+--| ON    | 01000000
+--| R1    | 00100000
+--| R2    | 00010000
+--| R3    | 00001000
+--| L1    | 00000100
+--| L2    | 00000010
+--| L3    | 00000001
+--| ---NEXT STATE LOGIC-----------------
+--State,S7,S6,S5,S4,S3,S2,S1,S0,L,R,S,S7,S6,S5,S4,S3,S2,S1,S0*
+--OFF,1,0,0,0,0,0,0,0,0,0,OFF,1,0,0,0,0,0,0,0
+--OFF,1,0,0,0,0,0,0,0,0,1,R1,0,0,1,0,0,0,0,0
+--OFF,1,0,0,0,0,0,0,0,1,0,L1,0,0,0,0,0,1,0,0
+--OFF,1,0,0,0,0,0,0,0,1,1,ON,0,1,0,0,0,0,0,0
+--ON,0,1,0,0,0,0,0,0,X,X,OFF,1,0,0,0,0,0,0,0
+--R1,0,0,1,0,0,0,0,0,X,X,R2,0,0,0,1,0,0,0,0
+--R2,0,0,0,1,0,0,0,0,X,X,R3,0,0,0,0,1,0,0,0
+--R3,0,0,0,0,1,0,0,0,X,X,OFF,1,0,0,0,0,0,0,0
+--L1,0,0,0,0,0,1,0,0,X,X,L2,0,0,0,0,0,0,1,0
+--L2,0,0,0,0,0,0,1,0,X,X,L3,0,0,0,0,0,0,0,1
+--L3,0,0,0,0,0,0,0,1,X,X,OFF,1,0,0,0,0,0,0,0
+---OUTPUT LOGIC
+--State,S7,S6,S5,S4,S3,S2,S1,S0,LC,LB,LA,RA,RB,RC
+--OFF,1,0,0,0,0,0,0,0,0,0,0,0,0,0
+--ON,0,1,0,0,0,0,0,0,1,1,1,1,1,1
 
--- CONSTANTS ------------------------------------------------------------------
-  
+--R1,0,0,1,0,0,0,0,0,0,0,0,1,0,0
+--R2,0,0,0,1,0,0,0,0,0,0,0,1,1,0
+--R3,0,0,0,0,1,0,0,0,0,0,0,1,1,1
+
+--L1,0,0,0,0,0,1,0,0,0,0,1,0,0,0
+--L2,0,0,0,0,0,0,1,0,0,1,1,0,0,0
+--L3,0,0,0,0,0,0,0,1,1,1,1,0,0,0
+-- register signals with default state OFF
+   signal f_Q : std_logic_vector(7 downto 0) := "10000000";
+   signal f_Q_next : std_logic_vector(7 downto 0) := "10000000";
 begin
-
 	-- CONCURRENT STATEMENTS --------------------------------------------------------	
+	-- ONE HOT 
+	f_Q_next(7) <= f_Q(0) or f_Q(3) or f_Q(6) or (f_Q(7) and (not i_left) and (not i_right)); -- any to OFF
+	f_Q_next(6) <= (f_Q(7) and i_left and i_right);-- any to ON
+	f_Q_next(5) <= f_Q(7)and i_right and (not i_left); -- Off to R1
+	f_Q_next(2) <= f_Q(7) and i_left and (not i_right); -- off to L1
+	f_Q_next(3) <= f_Q(4); -- R2 to R3
+	f_Q_next(4) <= f_Q(5); -- R1 to R2
 	
+	f_Q_next(1)<=  f_Q(2); -- L1 to L2
+	f_Q_next(0) <=  f_Q(1); --L2 to L3
+    
+    -- output logic
+	o_lights_R(0)<= f_Q(6) or f_Q(5) or f_Q(4) or f_Q(3); 
+	o_lights_R(1)<= f_Q(6) or f_Q(4) or f_Q(3); 
+	o_lights_R(2)<= f_Q(6) or f_Q(3); 
+	
+	o_lights_L(0)<= f_Q(6) or f_Q(2) or f_Q(1) or f_Q(0);
+	o_lights_L(1)<= f_Q(6) or f_Q(1) or f_Q(0);
+	o_lights_L(2)<= f_Q(6) or f_Q(0);
     ---------------------------------------------------------------------------------
 	
 	-- PROCESSES --------------------------------------------------------------------
-    
+      
+        register_proc : process (i_clk, i_reset)
+    begin
+    if (rising_edge(i_clk)) then -- synchronous
+        if i_reset = '1' then
+        f_Q <= "10000000";        -- reset state is OFF
+    else
+        f_Q <= f_Q_next;    -- next state becomes current state
+        end if;
+    end if;
+	end process register_proc;
 	-----------------------------------------------------					   
 				  
 end thunderbird_fsm_arch;
